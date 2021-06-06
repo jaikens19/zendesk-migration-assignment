@@ -34,6 +34,7 @@ def zendesk_fetch(endpoint, method='GET', payload=''):
 
 set_environment_vars()
 
+##
 ## print("============ Organizations: ============")
 
 # with open('data/organizations.csv') as org_file:
