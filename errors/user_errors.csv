@@ -1,0 +1,2 @@
+id,name,email,organization_id,role,active,notes,group,api_subscription,employee_id,promotion_code,tags,error,details,description
+987653,Test user 3,testuser2@email.com,99999990003,admin,TRUE,,Product Support - CE,plan_silver,,tetsetsetsetset,,RecordInvalid,"{'email': [{'description': 'Email: testuser2@email.com is already being used by another user', 'error': 'DuplicateValue'}]}",Record validation errors

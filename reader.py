@@ -74,7 +74,6 @@ def zendesk_fetch_list(endpoint, method, key, lst, max_per_request=100):
         ## loop through job id's, make a fetch for each job, get list of results
         job_results = []
         for job in job_ids:
-            # print('JOB IDDDDDD: ', job)
             job_status = zendesk_fetch(f'/api/v2/job_statuses/{job}').get('job_status')
             job_results.extend(job_status.get('results'))
         return job_results
@@ -179,7 +178,7 @@ set_environment_vars()
 
 start_time = time.time()
 
-## print("============ Organizations: ============")
+# print("============ Organizations: ============")
 
 existing_orgs = {}
 get_existing_orgs()
@@ -233,14 +232,10 @@ zendesk_fetch_list('/api/v2/organizations/update_many', 'PUT', 'organizations', 
 
 for name in new_org_tags_dict:
     org_tags_list.append((existing_orgs.get(name).get('zendesk_id'), new_org_tags_dict.get(name)))
-## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
-## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
-## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
+
 for tags in org_tags_list:
     update_tag('organizations', tags[0], tags[1])
-## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
-## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
-## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
+
 
 org_time = time.time()
 
@@ -334,17 +329,13 @@ with open('data/mock_user_data.csv') as user_file:
                     organization_membership_list.append({'user_id': zendesk_id, 'organization_id': org.get('zendesk_id')})
 
 with open('errors/user_errors.csv', 'w', newline='') as csvfile:
-    print(field_names)
-    # field_names.extend(['error', 'details', 'description'])
+    
     writer = csv.DictWriter(csvfile, fieldnames=field_names)
     writer.writeheader()
     for user in user_errors_list:
 
         writer.writerow(user)
 
-print(field_names)
-print(user_errors_list)
-## ADD ERROR HANDLING FOR BAD ID'S
 add_membership(group_membership_list, 'group')
 add_membership(organization_membership_list, 'organization')
 
@@ -396,7 +387,7 @@ with open('data/ticket_comments_mock_data.csv') as ticket_comment_file:
         })
 
 
-# zendesk_fetch_list('/api/v2/imports/tickets/create_many','POST', 'tickets', list(tickets_dict.values()))
+zendesk_fetch_list('/api/v2/imports/tickets/create_many','POST', 'tickets', list(tickets_dict.values()))
 
 get_existing_tickets()
 
