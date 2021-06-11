@@ -87,8 +87,7 @@ def update_tag(record_type, zendesk_id, tags, overwrite=False):
         tags.extend([tag for tag in zendesk_tags if tag in protected_tags])
 
     ## append personal tag per instructions
-    tags.append('jaikens-zendesk') 
-    tags.append('mockdata-jaikens')
+    tags.append('jaikens-zendesk')
     ## add or overwrite tags
     zendesk_fetch_list(f'/api/v2/{record_type}/{zendesk_id}/tags', 'POST' if overwrite else 'PUT', 'tags', tags)
 
@@ -187,8 +186,8 @@ org_update_list = []
 org_tags_list = []
 new_org_tags_dict = {}
 
-# with open('data/organizations.csv') as org_file:
-with open('data/mock_organization_data.csv') as org_file:
+
+with open('data/organizations.csv') as org_file:
     zendesk_org = {}
     for csv_org in csv.DictReader(org_file):
         org_name = csv_org.get('name').strip()
@@ -263,8 +262,7 @@ group_membership_list = []
 organization_membership_list = []
 user_errors_list = []
 field_names = []
-# with open('data/users.csv') as user_file:
-with open('data/mock_user_data.csv') as user_file:
+with open('data/users.csv') as user_file:
     for csv_user in csv.DictReader(user_file):
         zendesk_user = {}
         response = {}
@@ -349,7 +347,7 @@ existing_tickets = {}
 
 zendesk_fetch_ticket_fields()
 
-with open('data/ticket_mock_data.csv') as ticket_file:
+with open('data/tickets.csv') as ticket_file:
     for csv_ticket in csv.DictReader(ticket_file):
         tickets_tag_dict[csv_ticket.get('id')] = {'tags': csv_ticket.get('tags')}
         tickets_dict[csv_ticket.get('id')] = {
@@ -377,7 +375,7 @@ with open('data/ticket_mock_data.csv') as ticket_file:
 
 # print("============ Ticket Comments: ============")
 
-with open('data/ticket_comments_mock_data.csv') as ticket_comment_file:
+with open('data/ticket_comments.csv') as ticket_comment_file:
     for csv_ticket_comment in csv.DictReader(ticket_comment_file):
         tickets_dict[csv_ticket_comment.get('parent_ticket_id')]['comments'].append({
             'author_id': convert_external_to_zendesk_id(csv_ticket_comment.get('author_id')),
