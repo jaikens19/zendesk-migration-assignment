@@ -26,26 +26,58 @@ def convert_csv_list(lst):
     return [item.strip("'()‘’ ") for item in lst.strip('[] ').split(',')]
 
 def zendesk_fetch(endpoint, method='GET', payload='' ):
-    conn = http.client.HTTPSConnection(os.getenv('SUPPORT_URL'))
     headers = {
         'Authorization': f'Basic {os.getenv("BASIC_TOKEN")}',
         'Content-Type': 'application/json'
     }
-    conn.request(method, endpoint, payload, headers)
-    res = conn.getresponse()
+    api_retry_seconds = 0
+    max_retries = 3
+    retries = 0
+    while True: 
+        time.sleep(api_retry_seconds)
+        conn = http.client.HTTPSConnection(os.getenv('SUPPORT_URL'))
+        conn.request(method, endpoint, payload, headers)
+        res = conn.getresponse()
+        if res.status == 429 and retries < max_retries:
+            api_retry_seconds = int(res.getheader('Retry-After'))
+            retries += 1
+            print(f'API Limit reached     : Retrying in {api_retry_seconds} seconds')
+        else:
+            break
     return json.loads(res.read().decode('utf-8'))
 
 def zendesk_fetch_list(endpoint, method, key, lst, max_per_request=100):
     i = 0
-    job_results = {}
+    job_ids = []
     while i < len(lst):
         new_lst = lst[i:i+max_per_request] 
         response = zendesk_fetch(endpoint, method, json.dumps({key: new_lst}))
+        ## check response status 
+        ## if 429 retry after x seconds 
         job_status = response.get('job_status')
         if job_status is not None:
-            job_results[job_status.get('id')] = job_status.get('results')
-        i += max_per_request    
-    return job_results
+            job_ids.append(job_status.get('id'))
+        i += max_per_request  
+    ## loop through job results until all are done  
+    if len(job_ids) > 0:
+        while True:
+            completed = True
+            job_statuses = zendesk_fetch(f'/api/v2/job_statuses/show_many?ids={",".join(job_ids)}').get('job_statuses')
+            for status in job_statuses:
+                if status.get('status') not in ['completed', 'failed', 'killed']:
+                    completed = False
+                    ## wait before checking statuses again
+                    time.sleep(2)
+                    break
+            if completed:
+                break
+        ## loop through job id's, make a fetch for each job, get list of results
+        job_results = []
+        for job in job_ids:
+            # print('JOB IDDDDDD: ', job)
+            job_status = zendesk_fetch(f'/api/v2/job_statuses/{job}').get('job_status')
+            job_results.extend(job_status.get('results'))
+        return job_results
     
 def update_tag(record_type, zendesk_id, tags, overwrite=False):
     ## convert tags string to a list
@@ -108,6 +140,20 @@ def get_existing_orgs():
         else:
             break
 
+def get_existing_tickets():
+    page = 1
+    while True:
+        ticket_fetch = zendesk_fetch(f'/api/v2/tickets?page={page}')
+        for ticket in ticket_fetch.get('tickets'):
+            ticket_external_id = ticket.get('external_id')
+            zendesk_id = ticket.get('id')
+            if ticket_external_id is not None:
+                existing_tickets[ticket_external_id] = zendesk_id
+        if ticket_fetch.get('next_page'):
+            page += 1
+        else:
+            break
+
 def zendesk_fetch_ticket_fields():
     fields = zendesk_fetch('/api/v2/ticket_fields').get('ticket_fields')
     for field in fields:
@@ -116,6 +162,18 @@ def zendesk_fetch_ticket_fields():
 def convert_external_to_zendesk_id(external_id):
     zendesk_id = existing_users.get(external_id)
     return zendesk_id if zendesk_id is not None else '1264164164750'
+
+def add_membership(lst, member_type):
+    endpoint = ''
+    key = ''
+    if member_type == 'group':
+        endpoint = '/api/v2/group_memberships/create_many'
+        key = 'group_memberships'
+    else:
+        endpoint = '/api/v2/organization_memberships/create_many'
+        key = 'organization_memberships'
+    zendesk_fetch_list(endpoint, 'POST', key, lst)
+
 
 set_environment_vars()
 
@@ -128,6 +186,7 @@ get_existing_orgs()
 org_create_list = []
 org_update_list = []
 org_tags_list = []
+new_org_tags_dict = {}
 
 # with open('data/organizations.csv') as org_file:
 with open('data/mock_organization_data.csv') as org_file:
@@ -158,15 +217,10 @@ with open('data/mock_organization_data.csv') as org_file:
         else:
             existing_orgs[org_name] = {'external_id': none_check(csv_org.get('id')), 'domain_names': csv_org_dict['domain_names']}
             org_create_list.append(csv_org_dict)
-            
+            ## add tags and org name to a dict
+            new_org_tags_dict[org_name] = none_check(csv_org.get('tags'))
+          
 org_create_results = zendesk_fetch_list('/api/v2/organizations/create_many', 'POST', 'organizations', org_create_list)
-## MAKE SURE TO DELEETE MEEE PLEASEEEEEEEE
-## MAKE SURE TO DELEETE MEEE PLEASEEEEEEEE
-## MAKE SURE TO DELEETE MEEE PLEASEEEEEEEE
-time.sleep(5)
-## MAKE SURE TO DELEETE MEEE PLEASEEEEEEEE
-## MAKE SURE TO DELEETE MEEE PLEASEEEEEEEE
-## MAKE SURE TO DELEETE MEEE PLEASEEEEEEEE
 
 get_existing_orgs()
 
@@ -177,6 +231,8 @@ org_update_list = list(map(add_id, org_update_list))
 
 zendesk_fetch_list('/api/v2/organizations/update_many', 'PUT', 'organizations', org_update_list)
 
+for name in new_org_tags_dict:
+    org_tags_list.append((existing_orgs.get(name).get('zendesk_id'), new_org_tags_dict.get(name)))
 ## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
 ## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
 ## NEED TO ADD NEWLY CREATED ORG TAGS, LINE 129
@@ -210,10 +266,13 @@ for group in zendesk_fetch('/api/v2/groups').get('groups'):
 
 group_membership_list = []
 organization_membership_list = []
+user_errors_list = []
+field_names = []
 # with open('data/users.csv') as user_file:
 with open('data/mock_user_data.csv') as user_file:
     for csv_user in csv.DictReader(user_file):
         zendesk_user = {}
+        response = {}
         ## if external id already exitsts update user
         if csv_user.get('id') in existing_users:
             zendesk_id = existing_users.get(csv_user.get('id'))
@@ -235,7 +294,7 @@ with open('data/mock_user_data.csv') as user_file:
             )).get('user')
         ## other wise we want to create a new user
         else:
-            zendesk_user = zendesk_fetch('/api/v2/users', 'POST', json.dumps({
+            response = zendesk_fetch('/api/v2/users', 'POST', json.dumps({
                     'user': {
                        'external_id': none_check(csv_user.get('id')),
                        'name': none_check(csv_user.get('name')),
@@ -250,14 +309,22 @@ with open('data/mock_user_data.csv') as user_file:
                        }
                     }
                 }
-            )).get('user')
-            existing_users[csv_user.get('id')] = zendesk_user.get('id')
-            # zendesk_fetch(f'/api/v2/users/{zendesk_id}', 'DELETE')
-        zendesk_id = zendesk_user.get('id')
-        update_tag('users', zendesk_id, none_check(csv_user.get('tags')))
+            ))
+            zendesk_user = response.get('user')
 
-        zendesk_group_id = user_groups.get(csv_user.get('group').strip())
-        group_membership_list.append({'user_id': zendesk_id, 'group_id': zendesk_group_id})
+        if zendesk_user is not None:
+            existing_users[csv_user.get('id')] = zendesk_user.get('id')
+            zendesk_id = zendesk_user.get('id')
+            update_tag('users', zendesk_id, none_check(csv_user.get('tags')))
+            zendesk_group_id = user_groups.get(csv_user.get('group').strip())
+            group_membership_list.append({'user_id': zendesk_id, 'group_id': zendesk_group_id})
+        else:
+            csv_user['error'] = response.get('error')
+            csv_user['details'] = response.get('details')
+            csv_user['description'] = response.get('description')
+            user_errors_list.append(csv_user)
+            field_names = list(csv_user.keys())
+        
 
         for org_id in convert_csv_list(csv_user.get('organization_id')):
             ## convert org_id ==> org_name ==> org zendesk_id
@@ -266,18 +333,17 @@ with open('data/mock_user_data.csv') as user_file:
                 if org.get('external_id') == org_id:
                     organization_membership_list.append({'user_id': zendesk_id, 'organization_id': org.get('zendesk_id')})
 
-def add_membership(lst, member_type):
-    endpoint = ''
-    key = ''
-    if member_type == 'group':
-        endpoint = '/api/v2/group_memberships/create_many'
-        key = 'group_memberships'
-    else:
-        endpoint = '/api/v2/organization_memberships/create_many'
-        key = 'organization_memberships'
+with open('errors/user_errors.csv', 'w', newline='') as csvfile:
+    print(field_names)
+    # field_names.extend(['error', 'details', 'description'])
+    writer = csv.DictWriter(csvfile, fieldnames=field_names)
+    writer.writeheader()
+    for user in user_errors_list:
 
-    zendesk_fetch_list(endpoint, 'POST', key, lst)
-  
+        writer.writerow(user)
+
+print(field_names)
+print(user_errors_list)
 ## ADD ERROR HANDLING FOR BAD ID'S
 add_membership(group_membership_list, 'group')
 add_membership(organization_membership_list, 'organization')
@@ -287,12 +353,16 @@ print('User Total time        : ', f'{user_time - org_time}s')
 # print("============ Tickets: ============")
 tickets_dict = {}
 ticket_field_dict = {}
+tickets_tag_dict = {}
+existing_tickets = {}
 
 zendesk_fetch_ticket_fields()
 
 with open('data/ticket_mock_data.csv') as ticket_file:
     for csv_ticket in csv.DictReader(ticket_file):
+        tickets_tag_dict[csv_ticket.get('id')] = {'tags': csv_ticket.get('tags')}
         tickets_dict[csv_ticket.get('id')] = {
+            'external_id': csv_ticket.get('id'),
             'assignee_id': convert_external_to_zendesk_id(csv_ticket.get('assignee_id')),
             'created_at': csv_ticket.get('created_at'),
             'subject': csv_ticket.get('subject'),
@@ -302,15 +372,15 @@ with open('data/ticket_mock_data.csv') as ticket_file:
             'requester_id': convert_external_to_zendesk_id(csv_ticket.get('requester_id')),
             'updated_at': csv_ticket.get('updated_at'),
             'due_at': csv_ticket.get('due_at'),
-            'custom_fields': {
-               'About': csv_ticket.get('about'),
-               'Business Name': csv_ticket.get('business name'),
-               'Department': csv_ticket.get('dept'),
-               'Employee ID': csv_ticket.get('emp id'),
-               'Product Info':csv_ticket.get('product information'),
-               'Start Date': csv_ticket.get('start date'),
-               'Subscription': csv_ticket.get('subscription')
-            },
+            'custom_fields': [
+                {'id': ticket_field_dict.get('About'), 'value': csv_ticket.get('about')},
+                {'id': ticket_field_dict.get('Business Name'), 'value': csv_ticket.get('business name')},
+                {'id': ticket_field_dict.get('Department'), 'value': csv_ticket.get('dept')},
+                {'id': ticket_field_dict.get('Employee ID'), 'value': csv_ticket.get('emp id')},
+                {'id': ticket_field_dict.get('Product Info'), 'value': csv_ticket.get('product information')},
+                {'id': ticket_field_dict.get('Start Date'), 'value': csv_ticket.get('start date')},
+                {'id': ticket_field_dict.get('Subscription'), 'value': csv_ticket.get('subscription')}
+            ],
             'comments': []
         }
 
@@ -320,10 +390,18 @@ with open('data/ticket_comments_mock_data.csv') as ticket_comment_file:
     for csv_ticket_comment in csv.DictReader(ticket_comment_file):
         tickets_dict[csv_ticket_comment.get('parent_ticket_id')]['comments'].append({
             'author_id': convert_external_to_zendesk_id(csv_ticket_comment.get('author_id')),
-            'body': csv_ticket_comment.get('html_body'),
+            'html_body': csv_ticket_comment.get('html_body'),
             'public': csv_ticket_comment.get('public'),
             'created_at': csv_ticket_comment.get('created_at')
         })
 
+
+# zendesk_fetch_list('/api/v2/imports/tickets/create_many','POST', 'tickets', list(tickets_dict.values()))
+
+get_existing_tickets()
+
+for external_id in tickets_tag_dict:
+    update_tag('tickets',  existing_tickets.get(external_id), none_check(tickets_tag_dict[external_id].get('tags')))
+
 ticket_time = time.time()
-print('Ticket Total time        : ', f'{ticket_time - user_time}s')
+print('Ticket Total time      : ', f'{ticket_time - user_time}s')
